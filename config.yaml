@@ -1,0 +1,78 @@
+# Info Aggregator Configuration
+# Each source has: enabled, monthly_limit, and source-specific settings
+
+sources:
+  searxng:
+    enabled: true
+    type: local
+    base_url: "http://localhost:8080"
+    timeout: 15
+
+  firecrawl_local:
+    enabled: true
+    type: local
+    base_url: "http://localhost:3002"
+    timeout: 30
+
+  tavily:
+    enabled: true
+    type: cloud
+    monthly_limit: 3000
+    per_search_limit: 2
+    timeout: 15
+    # api_key from env: TAVILY_API_KEY
+
+  exa:
+    enabled: true
+    type: cloud
+    monthly_limit: 5000
+    per_search_limit: 2
+    timeout: 15
+    # api_key from env: EXA_API_KEY
+
+  firecrawl_cloud:
+    enabled: true
+    type: cloud
+    monthly_limit: 2000
+    timeout: 30
+    # api_key from env: FIRECRAWL_API_KEY
+
+# Search modes
+modes:
+  full:
+    description: "All enabled sources, no cost limit"
+    use_cloud: true
+    use_local: true
+  budget:
+    description: "Free local sources first, cloud only if insufficient"
+    use_cloud: false
+    use_local: true
+  manual:
+    description: "Only explicitly specified sources"
+
+# Output preferences
+output:
+  max_results_per_source: 10
+  show_full_content_by_default: false
+
+# Authority scoring (domain → tier 1-4, lower = more authoritative)
+authority:
+  tier1_domains:
+    - "arxiv.org"
+    - "doi.org"
+    - "ieee.org"
+    - "acm.org"
+    - "nature.com"
+    - "science.org"
+    - "github.com/*/docs"
+    - "*.gov.cn"
+    - "*.gov"
+    - "*.edu"
+    - "*.edu.cn"
+  tier4_domains:
+    - "twitter.com"
+    - "x.com"
+    - "reddit.com"
+    - "zhihu.com"
+    - "weibo.com"
+    - "tieba.baidu.com"

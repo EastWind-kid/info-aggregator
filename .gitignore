@@ -1,0 +1,8 @@
+*.pyc
+__pycache__/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.env
+~/.cc-search/
