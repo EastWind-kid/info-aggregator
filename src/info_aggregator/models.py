@@ -1,9 +1,14 @@
 """Data models for standardized search results."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .gap_detector import GapAnalysis
 
 
 class AuthorityTier(Enum):
@@ -106,6 +111,9 @@ class AggregatedOutput:
     ai_angle: list[StandardResult] = field(default_factory=list)
     full_text_angle: list[StandardResult] = field(default_factory=list)
     gaps: list[str] = field(default_factory=list)  # Identified information gaps
+
+    # Gap analysis (populated by pipeline via GapDetector)
+    gap_analysis: object | None = None  # GapAnalysis | None (object avoids circular import)
 
     # Layer 3: Raw results
     all_results: list[StandardResult] = field(default_factory=list)

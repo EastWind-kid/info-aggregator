@@ -20,7 +20,7 @@ sources:
     monthly_limit: 3000
     per_search_limit: 2
     timeout: 15
-    # api_key from env: TAVILY_API_KEY
+    api_key: "YOUR_TAVILY_API_KEY"
 
   exa:
     enabled: true
@@ -28,14 +28,14 @@ sources:
     monthly_limit: 5000
     per_search_limit: 2
     timeout: 15
-    # api_key from env: EXA_API_KEY
+    api_key: "YOUR_EXA_API_KEY"
 
   firecrawl_cloud:
     enabled: true
     type: cloud
     monthly_limit: 2000
     timeout: 30
-    # api_key from env: FIRECRAWL_API_KEY
+    api_key: "YOUR_FIRECRAWL_API_KEY"
 
 # Search modes
 modes:
@@ -54,6 +54,11 @@ modes:
 output:
   max_results_per_source: 10
   show_full_content_by_default: false
+
+# Developer settings
+dev:
+  # Directory for raw debug output (--debug flag). Relative to project root.
+  raw_output_dir: "./debug-output"
 
 # Authority scoring (domain → tier 1-4, lower = more authoritative)
 authority:

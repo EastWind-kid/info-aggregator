@@ -26,6 +26,16 @@ python -m info_aggregator.cli --stats
 # Verbose mode shows per-source status table
 python -m info_aggregator.cli "query" -v
 
+# Debug mode — save raw per-source JSON to dev.raw_output_dir
+PYTHONIOENCODING=utf-8 python -m info_aggregator.cli "query" -m full --debug
+
+# REST API server
+PYTHONIOENCODING=utf-8 python -m info_aggregator.cli serve --port 8000
+# Then open http://localhost:8000/docs for interactive Swagger UI
+
+# MCP server (for Claude Desktop integration)
+PYTHONIOENCODING=utf-8 python -m info_aggregator.cli mcp
+
 # Run tests (when added)
 pytest
 ```
@@ -73,7 +83,9 @@ Uses Rich's `Text` API (not markup strings) to avoid markup injection from URL t
 
 ### Config (`config.yaml`)
 
-Per-source: `enabled`, `type` (cloud/local), `monthly_limit`, `per_search_limit` (credits consumed per call), `timeout`, `base_url` (for local sources). Modes define which source categories to use (`use_cloud`, `use_local`). Authority tier rules are embedded in each source adapter's `_classify_authority()` method (not yet config-driven from the YAML authority section).
+Per-source: `enabled`, `type` (cloud/local), `monthly_limit`, `per_search_limit` (credits consumed per call), `timeout`, `base_url` (for local sources), `api_key` (for cloud sources — read from here, not just env vars). Modes define which source categories to use (`use_cloud`, `use_local`). Authority tier rules are embedded in each source adapter's `_classify_authority()` method (not yet config-driven from the YAML authority section).
+
+**IMPORTANT**: `config.yaml` contains real API keys and is git-ignored. Use `config.example.yaml` as the template when cloning on a new machine — copy it to `config.yaml` and fill in keys.
 
 ### Docker services (required for local sources)
 
@@ -83,3 +95,75 @@ firecrawl-api-1    → http://localhost:3002   (POST /v1/scrape)
 ```
 
 Both are managed via docker-compose in the parent directories `searxng/` and (root-level) respectively. Ensure Docker Desktop is running before using `budget` or `full` mode.
+
+### Gap detection (`gap_detector.py`)
+
+Standalone module with zero Rich/Click dependencies — usable by future REST API / MCP Server. Analyzes `AggregatedOutput` for:
+
+| Check | What it detects | Severity triggers |
+|-------|----------------|-------------------|
+| Language balance | zh/en ratio skew | >80% single language → MEDIUM, 100% → HIGH |
+| Authority skew | Tier distribution of domains | >60% UNKNOWN → HIGH, >50% TIER_4 → MEDIUM |
+| Source type absence | Missing content types vs query keywords | Academic/news/tutorial queries missing corresponding type → MEDIUM |
+| Freshness | Publication date coverage | >60% no dates → INFO, all >1yr old → MEDIUM |
+| Source coverage | Results-per-source distribution | 1 source with results out of many → HIGH, per-source zero results → MEDIUM |
+| Cross-source diffs | Same URL from 2+ sources | Side-by-side snippet comparison rendered in CLI |
+
+The `GapAnalysis` result is attached to `AggregatedOutput.gap_analysis`. The `gaps: list[str]` field on AggregatedOutput is populated from finding titles for backward compatibility.
+
+Gap warnings and cross-source diffs are rendered automatically in CLI output (no extra flag needed).
+
+### Debug output (`debug_output.py`)
+
+When `--debug` / `-d` is passed, raw per-source search results are saved as JSON files under the directory configured in `config.yaml` → `dev.raw_output_dir` (default: `./debug-output`). The structure is:
+
+```
+debug-output/
+  YYYY-MM-DD/
+    HHMMSS-<query-slug>/
+      _summary.json          # query metadata, timing, per-source counts
+      searxng.json           # raw StandardResult list per source
+      tavily.json
+      exa.json
+      ...
+```
+
+Each `.json` file contains the full serialized `StandardResult` objects including the `raw` field (original API response). This is useful for comparing how different sources represent the same information.
+
+### REST API server (`server.py`)
+
+FastAPI application on port 8000 by default. Endpoints:
+
+```
+GET  /api/v1/health    — all source health checks
+GET  /api/v1/sources   — list configured sources with status
+GET  /api/v1/stats     — budget/usage statistics
+POST /api/v1/search    — run multi-source search (body: {query, mode, max_results, sources})
+GET  /docs             — interactive Swagger UI
+```
+
+Pydantic models for request/response are defined in `server.py`. The server reuses `pipeline.search_all()` — all gap detection and dedup logic applies. API keys are injected from `config.yaml` at request time (same pattern as pipeline).
+
+### MCP server (`mcp_server.py`)
+
+Exposes 4 tools to Claude Desktop or any MCP client via stdio transport:
+
+| Tool | Description |
+|------|-------------|
+| `search` | Multi-source search with gap analysis |
+| `list_sources` | List configured sources and status |
+| `get_stats` | Budget/usage stats |
+| `health` | Per-source health check |
+
+Claude Desktop config (`claude_desktop_config.json`):
+```json
+{"mcpServers": {"info-aggregator": {"command": "python", "args": ["-m", "info_aggregator.mcp_server"]}}}
+```
+
+### Interaction layer summary
+
+```
+CLI          ← cc-search "query" --mode full
+REST API     ← http://localhost:8000/api/v1/search  + /docs (Swagger)
+MCP Server   ← stdio transport → Claude Desktop
+```

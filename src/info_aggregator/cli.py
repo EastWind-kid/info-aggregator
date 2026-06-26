@@ -43,6 +43,10 @@ def _render_results(output) -> None:
         )
         console.print(f"[dim]Credits spent: {credit_str}[/dim]")
 
+    # Gap warnings (before individual results)
+    if output.gap_analysis:
+        _render_gap_warnings(output.gap_analysis)
+
     console.print()
 
     for i, r in enumerate(results[:30], 1):
@@ -85,6 +89,10 @@ def _render_results(output) -> None:
     if len(results) > 30:
         console.print(f"[dim]... and {len(results) - 30} more results[/dim]")
 
+    # Cross-source comparison (after individual results)
+    if output.gap_analysis:
+        _render_cross_source_diffs(output.gap_analysis)
+
     # Summary statistics
     console.print()
     stats = Table(title="Coverage Summary")
@@ -93,6 +101,111 @@ def _render_results(output) -> None:
     for src_name, src_results in output.results_by_source.items():
         stats.add_row(src_name, str(len(src_results)))
     console.print(stats)
+
+
+# ── Gap warning rendering ────────────────────────────────────
+
+_SEVERITY_ICONS = {
+    "high": "🔴",
+    "medium": "🟡",
+    "low": "🔵",
+    "info": "ℹ️ ",
+}
+
+_SEVERITY_STYLE = {
+    "high": "bold red",
+    "medium": "yellow",
+    "low": "blue",
+    "info": "dim",
+}
+
+
+def _render_gap_warnings(gap_analysis) -> None:
+    """Render gap detection findings as a Rich Panel."""
+    from .gap_detector import GapAnalysis
+
+    assert isinstance(gap_analysis, GapAnalysis)
+
+    findings = gap_analysis.findings
+    if not findings:
+        return
+
+    # Build content lines
+    lines: list[str] = []
+    for f in findings[:8]:  # cap to avoid overwhelming output
+        icon = _SEVERITY_ICONS.get(f.severity.value, "  ")
+        style = _SEVERITY_STYLE.get(f.severity.value, "dim")
+        lines.append(f"[{style}]{icon} {f.severity.value.upper():6s}[/{style}] {f.title}")
+
+        if f.suggested_queries:
+            for sq in f.suggested_queries[:2]:
+                lines.append(f"          [dim italic]→ {sq}[/dim italic]")
+
+    if len(findings) > 8:
+        lines.append(f"[dim]... and {len(findings) - 8} more findings[/dim]")
+
+    content = "\n".join(lines)
+
+    # Summary header
+    if gap_analysis.summary:
+        content = f"[bold]{gap_analysis.summary}[/bold]\n\n{content}"
+
+    console.print(Panel(
+        content,
+        title="Gap Warnings",
+        border_style="yellow",
+        padding=(0, 1),
+    ))
+
+
+def _render_cross_source_diffs(gap_analysis) -> None:
+    """Render cross-source snippet comparisons for shared URLs."""
+    from .gap_detector import GapAnalysis
+
+    assert isinstance(gap_analysis, GapAnalysis)
+
+    diffs = gap_analysis.cross_source_diffs
+    if not diffs:
+        return
+
+    console.print()
+    console.print(
+        Panel.fit(
+            f"[dim]{len(diffs)} URL(s) covered by multiple sources — "
+            f"comparing snippets[/dim]",
+            title="Cross-Source Comparison",
+            border_style="cyan",
+            padding=(0, 1),
+        )
+    )
+
+    shown = 0
+    for d in diffs[:5]:
+        shown += 1
+        console.print()
+
+        # Title & URL header
+        from rich.text import Text
+        header = Text()
+        header.append(f"  {shown}. ", style="bold")
+        header.append(d.title, style="bold")
+        console.print(header)
+        console.print(Text(f"     {d.url}", style="dim underline"))
+
+        # Per-source snippets in a table
+        tbl = Table(show_header=False, box=None, padding=(0, 1))
+        tbl.add_column("source", style="cyan", width=14)
+        tbl.add_column("snippet", style="dim")
+
+        for entry in d.entries:
+            snip = entry.snippet[:200] if entry.snippet else "(no snippet)"
+            score = f" [{entry.relevance_score:.1f}]" if entry.relevance_score else ""
+            tbl.add_row(f"  {entry.source_name}{score}", snip)
+
+        console.print(tbl)
+
+    if len(diffs) > 5:
+        console.print(f"\n[dim]... and {len(diffs) - 5} more cross-source comparisons[/dim]")
 
 
 def _show_stats(config: dict) -> None:
@@ -155,7 +268,35 @@ def _show_stats(config: dict) -> None:
     console.print(tbl)
 
 
-@click.command()
+class _SearchGroup(click.Group):
+    """Custom group: routes unknown first args to 'search' subcommand."""
+
+    def resolve_command(self, ctx, args):
+        if args and args[0] not in self.commands:
+            cmd = self.commands["search"]
+            return cmd.name, cmd, args
+        return super().resolve_command(ctx, args)
+
+
+@click.group(cls=_SearchGroup, invoke_without_command=False)
+@click.version_option(version="0.2.0", prog_name="cc-search")
+@click.pass_context
+def main(ctx) -> None:
+    """Multi-source information aggregation — break out of your filter bubble.
+
+    \b
+    Examples:
+      cc-search "Rust async vs Go goroutines" --mode full
+      cc-search "大模型安全对齐" --mode budget
+      cc-search --stats
+      cc-search serve --port 8000
+    """
+    if ctx.invoked_subcommand is None:
+        # When --version is the only flag, Click handles it via version_option
+        pass
+
+
+@main.command("search", hidden=True)
 @click.argument("query", required=False)
 @click.option(
     "--mode",
@@ -179,15 +320,16 @@ def _show_stats(config: dict) -> None:
 )
 @click.option("--max-results", "-n", default=10, help="Max results per source")
 @click.option("--verbose", "-v", is_flag=True, help="Show verbose output")
+@click.option("--debug", "-d", is_flag=True, help="Save raw results to debug output dir")
 @click.option("--stats", is_flag=True, help="Show usage statistics and exit")
-@click.version_option(version="0.1.0", prog_name="cc-search")
-def main(
+def _search_cmd(
     query: str | None,
     mode: str,
     sources: str,
     config: str | None,
     max_results: int,
     verbose: bool,
+    debug: bool,
     stats: bool,
 ) -> None:
     """Multi-source information aggregation — break out of your filter bubble.
@@ -277,12 +419,54 @@ def main(
             traceback.print_exc()
         sys.exit(1)
 
+    # --- Debug output ---
+    if debug:
+        from .debug_output import save_debug_output
+        out_dir = save_debug_output(output, cfg)
+        if out_dir:
+            console.print(f"[dim]Debug output saved to: {out_dir}[/dim]")
+        else:
+            console.print(
+                "[yellow]Debug mode on but dev.raw_output_dir is not set in config.yaml[/yellow]"
+            )
+
     # --- Render ---
     _render_results(output)
 
     # --- Footer ---
     elapsed = (time.monotonic() - start_time) * 1000
     console.print(f"[dim]Wall-clock: {elapsed:.0f}ms[/dim]")
+
+
+# ── MCP command ──────────────────────────────────────────────
+
+
+@main.command("mcp")
+def mcp() -> None:
+    """Start MCP server (stdio transport for Claude Desktop)."""
+    from .mcp_server import run
+    run()
+
+
+# ── Serve command ────────────────────────────────────────────
+
+
+@main.command("serve")
+@click.option("--host", default="127.0.0.1", help="Bind address")
+@click.option("--port", default=8000, help="Bind port")
+@click.option("--reload", is_flag=True, help="Auto-reload on code changes")
+def serve(host: str, port: int, reload: bool) -> None:
+    """Start the REST API server."""
+    import uvicorn
+
+    console.print(f"[bold]Starting Info Aggregator API on http://{host}:{port}[/bold]")
+    console.print(f"[dim]Docs: http://{host}:{port}/docs[/dim]")
+    uvicorn.run(
+        "info_aggregator.server:app",
+        host=host,
+        port=port,
+        reload=reload,
+    )
 
 
 if __name__ == "__main__":

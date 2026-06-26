@@ -80,11 +80,23 @@ async def search_all(
                 continue
         final_sources.append(name)
 
-    # Resolve sources
+    # Resolve sources and inject config
     tasks = []
     for name in final_sources:
         try:
             src = SourceRegistry.get(name)
+            # Inject api_key from config if available
+            cfg = sources_config.get(name, {})
+            api_key = cfg.get("api_key", "")
+            if api_key and hasattr(src, "api_key"):
+                src.api_key = api_key
+                # Reset cached client so it picks up the new key
+                if hasattr(src, "_client"):
+                    src._client = None
+            # Inject timeout from config if available
+            timeout = cfg.get("timeout")
+            if timeout and hasattr(src, "timeout"):
+                src.timeout = int(timeout)
             tasks.append(_search_one(src, query))
         except KeyError:
             continue
@@ -146,7 +158,7 @@ async def search_all(
 
     total_time = (time.monotonic() - t0) * 1000
 
-    return AggregatedOutput(
+    output = AggregatedOutput(
         query=query,
         all_results=all_results,
         results_by_source=results_by_source,
@@ -156,3 +168,12 @@ async def search_all(
         news_angle=news_results,
         technical_angle=tech_results,
     )
+
+    # Run gap detection
+    from .gap_detector import GapDetector
+
+    detector = GapDetector(config)
+    output.gap_analysis = detector.analyze(output)
+    output.gaps = [f.title for f in output.gap_analysis.findings]
+
+    return output

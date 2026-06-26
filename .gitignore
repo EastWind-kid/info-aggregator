@@ -4,5 +4,8 @@ __pycache__/
 dist/
 build/
 .pytest_cache/
+.pytest_cache/*
 .env
 ~/.cc-search/
+config.yaml
+debug-output/
